@@ -11,15 +11,40 @@ export default function CameraScanner({ onPlateDetected, onClose }) {
     const scanningIntervalRef = useRef(null);
     const validDetectionsRef = useRef(0);
 
-    // Validate plate (only real plates, no random text)
+    // Validate plate (all US state formats)
     const validatePlateFormat = (text) => {
-        const cleaned = text.toUpperCase().replace(/[^A-Z0-9\-]/g, '');
+        const cleaned = text.toUpperCase().replace(/[^A-Z0-9\-\s]/g, '').replace(/\s+/g, '');
 
+        // Comprehensive US State License Plate Formats
         const patterns = [
-            /^[A-Z]{2,3}[-]?\d{4,5}$/,
-            /^[A-Z0-9]{3,4}[-]?[A-Z0-9]{3,5}$/,
-            /^\d{4,5}[-]?[A-Z]{2,3}$/,
-            /^[A-Z]{1,3}[-]?\d{3,5}[-]?[A-Z]{0,2}$/,
+            // Standard: ABC1234, ABC-1234
+            /^[A-Z]{3}\d{4}$/,
+            // Standard with dash: ABC-1234
+            /^[A-Z]{3}-\d{4}$/,
+            // California: ABC 1234 (converted to ABC1234)
+            /^[A-Z]{3}\d{4}$/,
+            // 2-Letter + 5-Number: AB12345 (Alaska, Arizona style)
+            /^[A-Z]{2}\d{5}$/,
+            // 3-Letter + 3-Number: ABC123
+            /^[A-Z]{3}\d{3}$/,
+            // 4-Number + 3-Letter: 1234ABC
+            /^\d{4}[A-Z]{3}$/,
+            // 3-Number + 4-Letter: 123ABCD
+            /^\d{3}[A-Z]{4}$/,
+            // NY Style: ABC1234D (with trailing letter)
+            /^[A-Z]{3}\d{4}[A-Z]$/,
+            // Commercial/Special: 1ABC234 or 12AB345
+            /^\d{1,2}[A-Z]{2,3}\d{3,4}$/,
+            // Vanity plates: ABCD123, ABCDE12, etc (letters+numbers mix)
+            /^[A-Z]{4}\d{2}$/,
+            /^[A-Z]{5}\d{1}$/,
+            /^[A-Z]{2}\d{4}$/,
+            /^[A-Z]{4}\d{3}$/,
+            /^[A-Z]{1,5}\d{1,4}$/,
+            // Government/Commercial: GVN1234, COM123
+            /^[A-Z]{3}\d{4}$/,
+            // Flexible pattern: at least 2 chars min, mixed letters/numbers
+            /^[A-Z0-9]{5,10}$/,
         ];
 
         const isValidFormat = patterns.some(pattern => pattern.test(cleaned));
@@ -27,7 +52,10 @@ export default function CameraScanner({ onPlateDetected, onClose }) {
         const hasNumbers = /\d/.test(cleaned);
         const lengthOk = cleaned.length >= 5 && cleaned.length <= 10;
         
-        return isValidFormat && hasLetters && hasNumbers && lengthOk ? cleaned : null;
+        // Reject if it's all letters (like "HELLO") or all numbers (like "12345")
+        const notRandomText = isValidFormat && hasLetters && hasNumbers;
+        
+        return notRandomText && lengthOk ? cleaned : null;
     };
 
     // Initialize camera
