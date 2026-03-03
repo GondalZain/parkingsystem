@@ -1,6 +1,8 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import Flag from "react-world-flags";
+import StripePaymentForm from "./StripePaymentForm";
+import { X } from "lucide-react";
 import {
     Search,
     Car,
@@ -123,6 +125,11 @@ export default function BookingForm({ lots = [] }) {
 
     const [totalPrice, setTotalPrice] = useState(0);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Payment State
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [pendingBookingData, setPendingBookingData] = useState(null);
+    const [isPaymentProcessing, setIsPaymentProcessing] = useState(false);
 
     const lotDropdownRef = useRef(null);
     const countryDropdownRef = useRef(null);
@@ -342,31 +349,67 @@ export default function BookingForm({ lots = [] }) {
                     slotNumber: selectedSlot,
                     totalPrice: totalPrice,
                     countryCode: selectedCountry.code,
-                    bookingId: extensionData?.id // Pass this for extension
+                    bookingId: extensionData?.id, // Pass this for extension
+                    paymentStatus: "pending" // Add payment status
                 }),
             });
             if (response.ok) {
                 const booking = await response.json();
-                alert(`Booking successful! \n\n📍 Location: ${selectedLot.name}\n🚙 Plate: ${formData.carNumber}\n🔢 Slot: ${selectedSlot}\n💰 Total: $${totalPrice}`);
+                
+                // Store booking data and show payment modal
+                setPendingBookingData({
+                    bookingId: booking.id,
+                    carNumber: formData.carNumber,
+                    phoneNumber: formData.phoneNumber,
+                    lotName: selectedLot.name,
+                    lotId: selectedLot.id,
+                    slotNumber: selectedSlot,
+                    duration: `${formData.durationValue} ${formData.durationMode}${formData.durationValue > 1 ? 's' : ''}`,
+                    totalPrice: totalPrice,
+                });
+                
+                // Show payment modal instead of alert
+                setShowPaymentModal(true);
+            } else { 
+                alert("Failed to create booking. Make sure you selected a slot."); 
+            }
+        } catch (err) { 
+            alert("Error connecting to server."); 
+        }
+        finally { 
+            setIsSubmitting(false); 
+        }
+    };
 
-                // Clear form but keep lot to show updated slots
-                setFormData({ carNumber: "", phoneNumber: "", durationMode: "hourly", durationValue: 1 });
-                setSelectedSlot(null);
+    const handlePaymentSuccess = (paymentIntent) => {
+        // Payment successful - show confirmation
+        alert(`🎉 Booking Complete!\n\n📍 Location: ${selectedLot.name}\n🚙 Plate: ${formData.carNumber}\n🔢 Slot: ${selectedSlot}\n💰 Paid: $${totalPrice}`);
+        
+        // Clear form
+        setFormData({ carNumber: "", phoneNumber: "", durationMode: "hourly", durationValue: 1 });
+        setSelectedSlot(null);
+        setShowPaymentModal(false);
+        setPendingBookingData(null);
 
-                // Refresh slots immediately for the current lot
-                try {
-                    setIsLoadingSlots(true);
-                    const res = await fetch(`/api/slots?lotId=${selectedLot.id}`);
-                    const data = await res.json();
-                    if (data.availableSlots) setAvailableSlots(data.availableSlots);
-                } catch (err) {
-                    console.error("Refresh failed", err);
-                } finally {
-                    setIsLoadingSlots(false);
-                }
-            } else { alert("Failed to save booking. Make sure you selected a slot."); }
-        } catch (err) { alert("Error connecting to server."); }
-        finally { setIsSubmitting(false); }
+        // Refresh slots
+        const refreshSlots = async () => {
+            try {
+                setIsLoadingSlots(true);
+                const res = await fetch(`/api/slots?lotId=${selectedLot.id}`);
+                const data = await res.json();
+                if (data.slots) setAvailableSlots(data.slots);
+            } catch (err) {
+                console.error("Refresh failed", err);
+            } finally {
+                setIsLoadingSlots(false);
+            }
+        };
+        
+        refreshSlots();
+    };
+
+    const handlePaymentError = (errorMessage) => {
+        alert(`Payment failed: ${errorMessage}\n\nYour booking has been created but not paid. You can retry payment.`);
     };
 
     return (
@@ -679,7 +722,7 @@ export default function BookingForm({ lots = [] }) {
                         >
                             {isSubmitting ? <Loader2 className="w-6 h-6 animate-spin" /> : (
                                 <>
-                                    <span>CONFIRM BOOKING</span>
+                                    <span>PROCEED TO PAYMENT</span>
                                     <ArrowRight className="w-4 h-4 group-hover:translate-x-1.5 transition-transform" />
                                 </>
                             )}
@@ -687,6 +730,45 @@ export default function BookingForm({ lots = [] }) {
                     </form>
                 </div>
             </div>
+
+            {/* Payment Modal */}
+            {showPaymentModal && pendingBookingData && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[500px] max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-300">
+                        {/* Modal Header */}
+                        <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white flex items-center justify-between">
+                            <div>
+                                <h2 className="text-2xl font-black tracking-tight">Complete Payment</h2>
+                                <p className="text-blue-100 text-sm mt-1">Secure payment via Stripe</p>
+                            </div>
+                            <button
+                                onClick={() => setShowPaymentModal(false)}
+                                className="w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+                            >
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-6">
+                            <StripePaymentForm
+                                amount={pendingBookingData.totalPrice}
+                                bookingDetails={pendingBookingData}
+                                onSuccess={handlePaymentSuccess}
+                                onError={handlePaymentError}
+                                isProcessing={isPaymentProcessing}
+                            />
+                        </div>
+
+                        {/* Modal Footer Info */}
+                        <div className="border-t border-gray-100 px-6 py-4 bg-gray-50">
+                            <p className="text-xs text-gray-500 text-center">
+                                This is a secure transaction. Your payment information is encrypted and protected.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
         </section>
     );
 }
