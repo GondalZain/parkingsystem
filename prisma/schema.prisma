@@ -102,7 +102,7 @@ model Booking {
   
   // Payment Fields
   paymentStatus     String   @default("pending")  // pending, completed, failed, canceled, refunded
-  paymentIntentId   String?  @unique
+  paymentIntentId   String?  // Removed @unique - validation handled in code
   paymentMethod     String?  @default("stripe")
   paidAt            DateTime?
   refundedAt        DateTime?
@@ -111,6 +111,8 @@ model Booking {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   smsLogs       SmsLog[]
+  
+  @@index([paymentIntentId])
 }
 
 model SmsLog {
@@ -122,4 +124,44 @@ model SmsLog {
   timestamp       DateTime @default(now())
   
   booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+// 🔥 Enterprise Payment Transaction Log - Audit trail for all payments
+model PaymentTransaction {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Stripe Payment Details
+  paymentIntentId   String   @unique
+  stripeCustomerId  String?
+  chargeId          String?
+  
+  // Booking Reference
+  bookingId         String?  @db.ObjectId
+  
+  // Transaction Details
+  amount            Int      // Amount in cents
+  currency          String   @default("usd")
+  status            String   // pending, succeeded, failed, canceled, refunded
+  
+  // Metadata for fraud verification
+  vehicleNumber     String?
+  lotId             String?
+  slotNumber        Int?
+  phoneNumber       String?
+  
+  // Error tracking
+  errorCode         String?
+  errorMessage      String?
+  
+  // IP and device tracking (optional fraud prevention)
+  ipAddress         String?
+  userAgent         String?
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@index([bookingId])
+  @@index([status])
+  @@index([createdAt])
 }

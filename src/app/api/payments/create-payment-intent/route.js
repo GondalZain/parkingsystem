@@ -1,4 +1,5 @@
 import Stripe from "stripe";
+import prisma from "@/lib/prisma";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
 
@@ -30,20 +31,70 @@ export async function POST(request) {
             );
         }
 
+        // 🛡️ DOUBLE PAYMENT PROTECTION
+        // Check if there's already a successful payment for this exact booking combination
+        if (bookingDetails?.lotId && bookingDetails?.slotNumber && bookingDetails?.carNumber) {
+            const existingPayment = await prisma.paymentTransaction.findFirst({
+                where: {
+                    lotId: bookingDetails.lotId,
+                    slotNumber: parseInt(bookingDetails.slotNumber),
+                    vehicleNumber: bookingDetails.carNumber,
+                    status: "succeeded",
+                    createdAt: {
+                        // Only check payments in the last hour (same session protection)
+                        gte: new Date(Date.now() - 60 * 60 * 1000)
+                    }
+                }
+            });
+
+            if (existingPayment) {
+                console.log("⚠️ Double payment prevented for:", bookingDetails.carNumber);
+                return new Response(
+                    JSON.stringify({ 
+                        error: "This booking has already been paid",
+                        code: "DUPLICATE_PAYMENT",
+                        existingPaymentId: existingPayment.paymentIntentId
+                    }),
+                    { status: 400, headers: { "Content-Type": "application/json" } }
+                );
+            }
+        }
+
         console.log("Creating payment intent with amount:", amount, "cents ($" + (amount / 100).toFixed(2) + ")");
 
-        // Create payment intent
+        // 🔥 Create payment intent with comprehensive metadata for fraud protection
         const paymentIntent = await stripe.paymentIntents.create({
             amount: Math.round(amount), // Amount in cents
             currency: "usd",
             metadata: {
+                // Booking details for verification
                 carNumber: bookingDetails?.carNumber || "N/A",
                 phoneNumber: bookingDetails?.phoneNumber || "N/A",
                 lotId: bookingDetails?.lotId || "N/A",
                 lotName: bookingDetails?.lotName || "N/A",
-                slotNumber: bookingDetails?.slotNumber || "N/A",
+                slotNumber: String(bookingDetails?.slotNumber || "N/A"),
+                duration: bookingDetails?.duration || "N/A",
+                // Amount verification data
+                expectedAmount: String(amount),
+                totalPriceDollars: String(bookingDetails?.totalPrice || (amount / 100)),
+                // Timestamp for additional verification
+                createdTimestamp: new Date().toISOString(),
             },
-            description: `Parking booking - ${bookingDetails?.carNumber || "Unknown plate"}`,
+            description: `Parking booking - ${bookingDetails?.carNumber || "Unknown plate"} at ${bookingDetails?.lotName || "Unknown lot"}`,
+        });
+
+        // 📝 LOG TRANSACTION FOR AUDIT TRAIL
+        await prisma.paymentTransaction.create({
+            data: {
+                paymentIntentId: paymentIntent.id,
+                amount: Math.round(amount),
+                currency: "usd",
+                status: "pending",
+                vehicleNumber: bookingDetails?.carNumber || null,
+                lotId: bookingDetails?.lotId || null,
+                slotNumber: bookingDetails?.slotNumber ? parseInt(bookingDetails.slotNumber) : null,
+                phoneNumber: bookingDetails?.phoneNumber || null,
+            }
         });
 
         console.log("✅ Payment intent created:", paymentIntent.id);
